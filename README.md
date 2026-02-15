@@ -1,2 +1,26 @@
-# EncodingConverter
-EncodingConverter
+# Encoding Converter (텍스트 인코딩 변환기)
+
+이 프로그램은 다양한 텍스트 파일의 인코딩을 자동으로 인식하여 **UTF-8**로 변환해주는 도구입니다.
+
+## 주요 기능
+- **자동 인코딩 인식**: Shift-JIS (일본어), EUC-KR (한국어), CP949 (한국어), Johab (한글 조합형) 등을 자동으로 감지합니다.
+- **UTF-8 변환**: 인식된 인코딩을 UTF-8로 변환하여 저장합니다.
+- **드래그 앤 드롭 지원**: 파일이나 폴더를 프로그램 창으로 드래그하여 간편하게 변환할 수 있습니다.
+- **다중 파일 및 폴더 처리**: 여러 개의 파일이나 폴더를 한꺼번에 처리하며, 폴더 내의 하위 디렉토리까지 재귀적으로 탐색합니다.
+- **파일명 변경**: 변환된 파일은 원래 파일명 뒤에 `_u`가 붙어서 저장됩니다 (예: `test.txt` -> `test_u.txt`).
+- **대상 확장자**: `.txt`, `.html`, `.htm` 파일을 지원합니다.
+
+## 사용 방법
+1. `EncodingConverter.exe`를 실행합니다.
+2. 변환하고자 하는 파일이나 폴더를 프로그램 창 위로 드래그 앤 드롭합니다.
+3. 변환이 완료되면 "Conversion Complete!" 메시지가 표시됩니다.
+
+## 빌드 방법
+Visual Studio가 설치되어 있어야 하며, `build.bat` 파일을 실행하여 빌드할 수 있습니다.
+- 기본 설정된 VS 경로: `C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat`
+- 만약 경로가 다르다면 `build.bat` 내의 `VS_PATH`를 수정하십시오.
+
+## 기술 사양
+- **언어**: C++ (Win32 API)
+- **의존성**: 없음 (단일 실행 파일)
+- **시스템 요구사항**: Windows OS
