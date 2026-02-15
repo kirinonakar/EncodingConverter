@@ -10,7 +10,8 @@ if not exist "%VS_PATH%" (
 call "%VS_PATH%"
 
 echo Building EncodingConverter...
-cl /EHsc /O2 /W3 /std:c++17 main.cpp /link user32.lib shell32.lib gdi32.lib ole32.lib /OUT:EncodingConverter.exe
+rc.exe resources.rc
+cl /EHsc /O2 /W3 /std:c++17 /utf-8 /D_UNICODE /DUNICODE main.cpp resources.res /link user32.lib shell32.lib gdi32.lib ole32.lib comctl32.lib /OUT:EncodingConverter.exe
 
 if %ERRORLEVEL% equ 0 (
     echo Build Successful: EncodingConverter.exe

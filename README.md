@@ -1,6 +1,10 @@
 # Encoding Converter (텍스트 인코딩 변환기)
 
+![EncodingConverter Screenshot](screenshot.png)
+
 이 프로그램은 다양한 텍스트 파일의 인코딩을 자동으로 인식하여 **UTF-8**로 변환해주는 도구입니다.
+
+> **이 프로젝트는 바이브 코딩으로 제작되었습니다.** 🚀
 
 ## 주요 기능
 - **자동 인코딩 인식**: Shift-JIS (일본어), EUC-KR (한국어), CP949 (한국어), Johab (한글 조합형) 등을 자동으로 감지합니다.
@@ -15,6 +19,10 @@
 2. 변환하고자 하는 파일이나 폴더를 프로그램 창 위로 드래그 앤 드롭합니다.
 3. 변환이 완료되면 "Conversion Complete!" 메시지가 표시됩니다.
 
+## 🚀 사용 위치 및 다운로드
+
+최신 실행 파일은 **[GitHub Releases](https://github.com/kirinonakar/EncodingConverter/releases)** 페이지에서 다운로드할 수 있습니다.
+
 ## 빌드 방법
 Visual Studio가 설치되어 있어야 하며, `build.bat` 파일을 실행하여 빌드할 수 있습니다.
 - 기본 설정된 VS 경로: `C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat`
@@ -24,3 +32,6 @@ Visual Studio가 설치되어 있어야 하며, `build.bat` 파일을 실행하�
 - **언어**: C++ (Win32 API)
 - **의존성**: 없음 (단일 실행 파일)
 - **시스템 요구사항**: Windows OS
+
+## 📜 라이선스
+이 프로젝트는 **MIT 라이선스** [LICENSE](LICENSE)에 따라 자유롭게 사용할 수 있습니다.
