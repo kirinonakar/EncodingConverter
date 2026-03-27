@@ -1,4 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
+#define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
 #include <shellapi.h>
 #include <string>
@@ -9,6 +10,7 @@
 #include <objbase.h>
 #include <commctrl.h>
 #include <regex>
+#include <algorithm>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -28,11 +30,12 @@ namespace fs = std::filesystem;
 
 const wchar_t* CLASS_NAME = L"EncodingConverterPanel";
 const int BASE_WIDTH = 340;
-const int BASE_HEIGHT = 180;
+const int BASE_HEIGHT = 220;
+static bool g_mergeEnabled = false;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-void ProcessPath(const std::wstring& path, HWND hwnd);
-void ConvertFile(const fs::path& filePath);
+void ProcessPaths(const std::vector<std::wstring>& paths, HWND hwnd);
+std::string ConvertFile(const fs::path& filePath, bool saveIndividual);
 UINT DetectEncoding(const std::vector<char>& buffer);
 
 int GetDpiForWindowCompat(HWND hwnd) {
@@ -87,7 +90,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int window_height = Scale(BASE_HEIGHT, dpi);
 
     HWND hwnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_ACCEPTFILES | WS_EX_LAYERED,
+        WS_EX_ACCEPTFILES | WS_EX_LAYERED,
         CLASS_NAME,
         L"Encoding Converter",
         WS_POPUP,
@@ -155,6 +158,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Malgun Gothic");
         HFONT hFontDesc = CreateFontW(Scale(16, dpi), 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_OUTLINE_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Malgun Gothic");
+        HFONT hFontCheck = CreateFontW(Scale(14, dpi), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_OUTLINE_PRECIS,
+            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Malgun Gothic");
 
         SetTextColor(hdc, RGB(255, 255, 255));
         HGDIOBJ hOldFont = SelectObject(hdc, (HGDIOBJ)hFontTitle);
@@ -168,9 +173,43 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         rcDesc.top = Scale(85, dpi);
         DrawTextW(hdc, L"(txt, html, htm 드래그앤 드롭)\nsjis, euc-kr, cp949, 한글 조합형 -> UTF-8", -1, &rcDesc, DT_CENTER | DT_TOP);
 
+        // Draw Checkbox
+        SelectObject(hdc, hFontCheck);
+        const wchar_t* checkText = L"파일 합치기 (merged.txt)";
+        RECT rcCalc = { 0, 0, 0, 0 };
+        DrawTextW(hdc, checkText, -1, &rcCalc, DT_CALCRECT | DT_SINGLELINE);
+        int actualTextWidth = rcCalc.right - rcCalc.left;
+        
+        int boxSize = Scale(14, dpi);
+        int margin = Scale(10, dpi);
+        int totalWidth = boxSize + margin + actualTextWidth;
+        int startX = (rect.right - totalWidth) / 2;
+        int boxTop = Scale(155, dpi);
+        
+        RECT boxRect = { startX, boxTop, startX + boxSize, boxTop + boxSize };
+        
+        HPEN hBoxPen = CreatePen(PS_SOLID, 1, RGB(100, 100, 100));
+        HGDIOBJ hOldPen2 = SelectObject(hdc, hBoxPen);
+        Rectangle(hdc, boxRect.left, boxRect.top, boxRect.right, boxRect.bottom);
+        if (g_mergeEnabled) {
+            HPEN hCheckPen = CreatePen(PS_SOLID, 2, RGB(0, 255, 128));
+            SelectObject(hdc, hCheckPen);
+            MoveToEx(hdc, boxRect.left + Scale(3, dpi), boxRect.top + Scale(5, dpi), NULL);
+            LineTo(hdc, boxRect.left + Scale(6, dpi), boxRect.bottom - Scale(3, dpi));
+            LineTo(hdc, boxRect.right - Scale(2, dpi), boxTop + Scale(3, dpi));
+            DeleteObject(hCheckPen);
+        }
+        SelectObject(hdc, hOldPen2);
+        DeleteObject(hBoxPen);
+
+        RECT rcCheckText = { boxRect.right + margin, boxTop - Scale(1, dpi), boxRect.right + margin + actualTextWidth, boxTop + boxSize + Scale(1, dpi) };
+        SetTextColor(hdc, RGB(220, 220, 220));
+        DrawTextW(hdc, checkText, -1, &rcCheckText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
         SelectObject(hdc, hOldFont);
         DeleteObject(hFontTitle);
         DeleteObject(hFontDesc);
+        DeleteObject(hFontCheck);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -228,11 +267,44 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             InvalidateRect(GetDlgItem(hwnd, 1), NULL, FALSE);
         }
         break;
-    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDOWN: {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(hwnd, &pt);
+        int dpi = GetDpiForWindowCompat(hwnd);
+
+        HDC hdc = GetDC(hwnd);
+        HFONT hFontCheck = CreateFontW(Scale(14, dpi), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_OUTLINE_PRECIS,
+            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Malgun Gothic");
+        HGDIOBJ hOldFont = SelectObject(hdc, hFontCheck);
+        const wchar_t* checkText = L"파일 합치기 (merged.txt)";
+        RECT rcCalc = { 0, 0, 0, 0 };
+        DrawTextW(hdc, checkText, -1, &rcCalc, DT_CALCRECT | DT_SINGLELINE);
+        int actualTextWidth = rcCalc.right - rcCalc.left;
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hFontCheck);
+        ReleaseDC(hwnd, hdc);
+
+        int boxSize = Scale(14, dpi);
+        int margin = Scale(10, dpi);
+        int totalWidth = boxSize + margin + actualTextWidth;
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+        int startX = (rect.right - totalWidth) / 2;
+        int boxTop = Scale(155, dpi);
+        RECT rcHit = { startX, boxTop, startX + totalWidth, boxTop + boxSize };
+        
+        if (PtInRect(&rcHit, pt)) {
+            g_mergeEnabled = !g_mergeEnabled;
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
+        
         dragging = true;
         GetCursorPos(&lastMouse);
         SetCapture(hwnd);
         break;
+    }
     case WM_LBUTTONUP:
         dragging = false;
         ReleaseCapture();
@@ -252,12 +324,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     case WM_DROPFILES: {
         HDROP hDrop = (HDROP)wParam;
         UINT fileCount = DragQueryFileW(hDrop, 0xFFFFFFFF, NULL, 0);
+        std::vector<std::wstring> paths;
         for (UINT i = 0; i < fileCount; i++) {
             wchar_t filePath[MAX_PATH];
             DragQueryFileW(hDrop, i, filePath, MAX_PATH);
-            ProcessPath(filePath, hwnd);
+            paths.push_back(filePath);
         }
         DragFinish(hDrop);
+        ProcessPaths(paths, hwnd);
         MessageBoxW(hwnd, L"변환 완료!", L"성공", MB_OK | MB_ICONINFORMATION);
         return 0;
     }
@@ -281,17 +355,39 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
 
-void ProcessPath(const std::wstring& path, HWND hwnd) {
-    try {
-        fs::path p(path);
-        if (fs::is_directory(p)) {
-            for (const auto& entry : fs::recursive_directory_iterator(p)) {
-                if (fs::is_regular_file(entry)) ConvertFile(entry.path());
+void ProcessPaths(const std::vector<std::wstring>& paths, HWND hwnd) {
+    std::vector<fs::path> allFiles;
+    for (const auto& path : paths) {
+        try {
+            fs::path p(path);
+            if (fs::is_directory(p)) {
+                for (const auto& entry : fs::recursive_directory_iterator(p)) {
+                    if (fs::is_regular_file(entry)) allFiles.push_back(entry.path());
+                }
+            } else if (fs::is_regular_file(p)) {
+                allFiles.push_back(p);
             }
-        } else if (fs::is_regular_file(p)) {
-            ConvertFile(p);
+        } catch (...) {}
+    }
+
+    if (allFiles.empty()) return;
+
+    std::sort(allFiles.begin(), allFiles.end());
+
+    std::string mergedContent;
+    for (const auto& filePath : allFiles) {
+        std::string content = ConvertFile(filePath, true);
+        if (g_mergeEnabled && !content.empty()) {
+            if (!mergedContent.empty()) mergedContent += "\r\n\r\n";
+            mergedContent += content;
         }
-    } catch (...) {}
+    }
+
+    if (g_mergeEnabled && !mergedContent.empty()) {
+        fs::path outDir = allFiles[0].parent_path();
+        std::ofstream outFile(outDir / "merged.txt", std::ios::binary);
+        if (outFile) outFile.write(mergedContent.data(), mergedContent.size());
+    }
 }
 
 bool IsValidUtf8(const std::vector<char>& buffer) {
@@ -404,34 +500,41 @@ UINT DetectEncoding(const std::vector<char>& buffer) {
     return 949; // Default fallback for Korean environment
 }
 
-void ConvertFile(const fs::path& filePath) {
+std::string ConvertFile(const fs::path& filePath, bool saveIndividual) {
     std::wstring ext = filePath.extension().wstring();
     for (auto& c : ext) c = (wchar_t)towlower(c);
-    if (ext != L".txt" && ext != L".html" && ext != L".htm") return;
+    if (ext != L".txt" && ext != L".html" && ext != L".htm") return "";
 
     std::ifstream file(filePath, std::ios::binary);
-    if (!file) return;
+    if (!file) return "";
     std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
-    if (buffer.empty()) return;
+    if (buffer.empty()) return "";
 
     UINT srcCP = DetectEncoding(buffer);
-    if (srcCP == 65001) return;
+    std::string u8str;
 
-    int wlen = MultiByteToWideChar(srcCP, 0, buffer.data(), (int)buffer.size(), NULL, 0);
-    if (wlen <= 0) return;
-    std::wstring wstr(wlen, 0);
-    MultiByteToWideChar(srcCP, 0, buffer.data(), (int)buffer.size(), &wstr[0], wlen);
+    if (srcCP == 65001) {
+        u8str = std::string(buffer.begin(), buffer.end());
+    } else {
+        int wlen = MultiByteToWideChar(srcCP, 0, buffer.data(), (int)buffer.size(), NULL, 0);
+        if (wlen <= 0) return "";
+        std::wstring wstr(wlen, 0);
+        MultiByteToWideChar(srcCP, 0, buffer.data(), (int)buffer.size(), &wstr[0], wlen);
 
-    int u8len = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), NULL, 0, NULL, NULL);
-    if (u8len <= 0) return;
-    std::string u8str(u8len, 0);
-    WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), &u8str[0], u8len, NULL, NULL);
+        int u8len = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), NULL, 0, NULL, NULL);
+        if (u8len <= 0) return "";
+        u8str.assign(u8len, 0);
+        WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), &u8str[0], u8len, NULL, NULL);
 
-    fs::path outPath = filePath;
-    std::wstring stem = outPath.stem().wstring();
-    std::wstring newExt = outPath.extension().wstring();
-    outPath.replace_filename(stem + L"_u" + newExt);
-    std::ofstream outFile(outPath, std::ios::binary);
-    if (outFile) outFile.write(u8str.data(), u8str.size());
+        if (saveIndividual) {
+            fs::path outPath = filePath;
+            std::wstring stem = outPath.stem().wstring();
+            std::wstring newExt = outPath.extension().wstring();
+            outPath.replace_filename(stem + L"_u" + newExt);
+            std::ofstream outFile(outPath, std::ios::binary);
+            if (outFile) outFile.write(u8str.data(), u8str.size());
+        }
+    }
+    return u8str;
 }

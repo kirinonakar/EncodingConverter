@@ -11,7 +11,7 @@ call "%VS_PATH%"
 
 echo Building EncodingConverter...
 rc.exe resources.rc
-cl /EHsc /O2 /W3 /std:c++17 /utf-8 /D_UNICODE /DUNICODE main.cpp resources.res /link user32.lib shell32.lib gdi32.lib ole32.lib comctl32.lib /OUT:EncodingConverter.exe
+cl /EHsc /O2 /W3 /std:c++17 /utf-8 /D_UNICODE /DUNICODE /MD main.cpp resources.res /link user32.lib shell32.lib gdi32.lib ole32.lib comctl32.lib /DYNAMICBASE /NXCOMPAT /OUT:EncodingConverter.exe
 
 if %ERRORLEVEL% equ 0 (
     echo Build Successful: EncodingConverter.exe
