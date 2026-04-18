@@ -2,6 +2,8 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
 #include <shellapi.h>
+#include <shlwapi.h>
+
 #include <string>
 #include <vector>
 #include <fstream>
@@ -17,6 +19,8 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "shlwapi.lib")
+
 
 namespace fs = std::filesystem;
 
@@ -372,7 +376,10 @@ void ProcessPaths(const std::vector<std::wstring>& paths, HWND hwnd) {
 
     if (allFiles.empty()) return;
 
-    std::sort(allFiles.begin(), allFiles.end());
+    std::sort(allFiles.begin(), allFiles.end(), [](const fs::path& a, const fs::path& b) {
+        return StrCmpLogicalW(a.c_str(), b.c_str()) < 0;
+    });
+
 
     std::string mergedContent;
     for (const auto& filePath : allFiles) {
