@@ -663,7 +663,8 @@ bool ShouldPreferJohabOverChineseScores(
     int johabScore,
     int johabMarkerPairCount,
     int gbkScore,
-    int gb18030Score)
+    int gb18030Score,
+    int big5Score)
 {
     if (johabScore <= 0) {
         return false;
@@ -672,19 +673,18 @@ bool ShouldPreferJohabOverChineseScores(
     // Check script profile for Johab (CP1361)
     TextScriptProfile profile = GetTextScriptProfile(bytes, 1361);
     
-    // We expect some Hangul characters
-    int requiredHangulCount = bytes.size() < 1024 ? 4 : 16;
-    if (profile.HangulCount >= requiredHangulCount &&
-        profile.CjkCount * 3 <= profile.HangulCount &&
-        profile.BadCharacterCount <= (std::max)(2, profile.HangulCount / 6))
-    {
-        return true;
+    // If the system successfully decoded and analyzed the profile (meaning we got some characters)
+    if (profile.HangulCount > 0 || profile.CjkCount > 0 || profile.BadCharacterCount > 0) {
+        int requiredHangulCount = bytes.size() < 1024 ? 4 : 16;
+        return (profile.HangulCount >= requiredHangulCount &&
+                profile.CjkCount * 3 <= profile.HangulCount &&
+                profile.BadCharacterCount <= (std::max)(2, profile.HangulCount / 6));
     }
 
-    // Fallback to marker pair logic
+    // Fallback to marker pair logic ONLY if script profile could not be computed
     size_t requiredMarkerPairs = bytes.size() < 1024 ? 1 : bytes.size() >= 16 * 1024 ? 8 : 2;
     if ((size_t)johabMarkerPairCount >= requiredMarkerPairs) {
-        int chineseScore = (std::max)(gbkScore, gb18030Score);
+        int chineseScore = (std::max)({ gbkScore, gb18030Score, big5Score });
         return chineseScore <= 0 || (long long)johabScore * 4 >= (long long)chineseScore * 3;
     }
 
@@ -797,7 +797,7 @@ UINT DetectEncoding(const std::vector<char>& buffer) {
 
         bool chineseScoreIsWinning = maxScore == gbkScore || maxScore == gb18030Score || maxScore == big5Score;
         if (chineseScoreIsWinning) {
-            if (ShouldPreferJohabOverChineseScores(buffer, johabScore, johabMarkerPairCount, gbkScore, gb18030Score)) {
+            if (ShouldPreferJohabOverChineseScores(buffer, johabScore, johabMarkerPairCount, gbkScore, gb18030Score, big5Score)) {
                 return 1361;
             }
             if (ShouldPreferEucKrOverChineseScores(buffer, eucKrScore)) {
