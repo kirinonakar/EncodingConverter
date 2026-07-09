@@ -175,7 +175,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         SetTextColor(hdc, RGB(200, 200, 200));
         RECT rcDesc = rect;
         rcDesc.top = Scale(85, dpi);
-        DrawTextW(hdc, L"(txt, html, htm 드래그앤 드롭)\nsjis, euc-kr, cp949, 한글 조합형 -> UTF-8", -1, &rcDesc, DT_CENTER | DT_TOP);
+        DrawTextW(hdc, L"(txt, html, htm 드래그앤 드롭)\nsjis, jis, euc-kr, cp949, 조합형, gbk, gb18030, big5 -> UTF-8", -1, &rcDesc, DT_CENTER | DT_TOP);
 
         // Draw Checkbox
         SelectObject(hdc, hFontCheck);
@@ -425,7 +425,11 @@ UINT GetHtmlCharset(const std::vector<char>& buffer) {
     if (std::regex_search(head, match, re)) {
         std::string charset = match[1].str();
         if (charset == "shift_jis" || charset == "sjis" || charset == "x-sjis") return 932;
+        if (charset == "iso-2022-jp" || charset == "jis" || charset == "cp50220" || charset == "cp50221") return 50220;
         if (charset == "euc-kr" || charset == "cp949") return 949;
+        if (charset == "gbk" || charset == "gb2312" || charset == "cp936") return 936;
+        if (charset == "gb18030" || charset == "cp54936") return 54936;
+        if (charset == "big5" || charset == "cp950" || charset == "big5-hkscs") return 950;
         if (charset == "utf-8" || charset == "utf8") return 65001;
     }
     return 0;
@@ -460,7 +464,21 @@ int GetEucKrScore(const std::vector<char>& bytes) {
         if (b1 < 0x80) { i++; continue; }
         if (i + 1 >= len) break;
         unsigned char b2 = (unsigned char)bytes[i + 1];
-        if (b1 >= 0xB0 && b1 <= 0xC8 && b2 >= 0xA1 && b2 <= 0xFE) { score += 2; i += 2; continue; }
+        
+        // EUC-KR Hangul range: b1 in 0xB0-0xC8, b2 in 0xA1-0xFE
+        if (b1 >= 0xB0 && b1 <= 0xC8 && b2 >= 0xA1 && b2 <= 0xFE) {
+            score += 5;
+            i += 2;
+            continue;
+        }
+        
+        // Penalty for typical Chinese characters range in EUC-KR (0xC9-0xFD)
+        if (b1 >= 0xC9 && b1 <= 0xFD && b2 >= 0xA1 && b2 <= 0xFE) {
+            score -= 10;
+            i += 2;
+            continue;
+        }
+        
         i++;
     }
     return score;
@@ -482,10 +500,106 @@ int GetJohabScore(const std::vector<char>& bytes) {
     return score;
 }
 
+int GetGbkScore(const std::vector<char>& bytes) {
+    int score = 0, i = 0, len = (int)bytes.size();
+    while (i < len) {
+        unsigned char b1 = (unsigned char)bytes[i];
+        if (b1 < 0x80) { i++; continue; }
+        if (i + 1 >= len) break;
+        unsigned char b2 = (unsigned char)bytes[i + 1];
+        
+        // GBK (CP936) double-byte range check:
+        // First byte: 0x81 - 0xFE
+        // Second byte: 0x40 - 0xFE (excluding 0x7F)
+        if (b1 >= 0x81 && b1 <= 0xFE && b2 >= 0x40 && b2 <= 0xFE && b2 != 0x7F) {
+            // Highly common GB2312 Level 1 & 2 Hanzi & symbols
+            if (b1 >= 0xA1 && b1 <= 0xF7 && b2 >= 0xA1 && b2 <= 0xFE) {
+                // If the first byte is in 0xC9-0xF7 (Simplified Chinese specific, not common Korean EUC-KR Hangul range)
+                if (b1 >= 0xC9) {
+                    score += 5;
+                } else {
+                    score += 2;
+                }
+            } else {
+                score += 1;
+            }
+            i += 2;
+            continue;
+        }
+        i++;
+    }
+    return score;
+}
+
+int GetBig5Score(const std::vector<char>& bytes) {
+    int score = 0, i = 0, len = (int)bytes.size();
+    while (i < len) {
+        unsigned char b1 = (unsigned char)bytes[i];
+        if (b1 < 0x80) { i++; continue; }
+        if (i + 1 >= len) break;
+        unsigned char b2 = (unsigned char)bytes[i + 1];
+        
+        // Big5 (CP950) double-byte range check:
+        // First byte: 0xA1 - 0xF9
+        // Second byte: 0x40 - 0x7E or 0xA1 - 0xFE
+        if (b1 >= 0xA1 && b1 <= 0xF9 && ((b2 >= 0x40 && b2 <= 0x7E) || (b2 >= 0xA1 && b2 <= 0xFE))) {
+            // Big5 Level 1 (Common Traditional Chinese characters)
+            if (b1 >= 0xA4 && b1 <= 0xC6) {
+                if (b2 >= 0x40 && b2 <= 0x7E) {
+                    score += 5;
+                } else {
+                    score += 2;
+                }
+            } else {
+                score += 1;
+            }
+            i += 2;
+            continue;
+        }
+        i++;
+    }
+    return score;
+}
+
+bool HasJisEscapeSequence(const std::vector<char>& bytes) {
+    int len = (int)bytes.size();
+    for (int i = 0; i + 2 < len; i++) {
+        if ((unsigned char)bytes[i] == 0x1B) {
+            unsigned char b1 = (unsigned char)bytes[i + 1];
+            unsigned char b2 = (unsigned char)bytes[i + 2];
+            if ((b1 == 0x24 && (b2 == 0x40 || b2 == 0x42)) ||
+                (b1 == 0x28 && (b2 == 0x42 || b2 == 0x4A || b2 == 0x49))) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool HasGb18030FourByteSequence(const std::vector<char>& bytes) {
+    int len = (int)bytes.size();
+    for (int i = 0; i + 3 < len; i++) {
+        unsigned char b1 = (unsigned char)bytes[i];
+        unsigned char b2 = (unsigned char)bytes[i + 1];
+        unsigned char b3 = (unsigned char)bytes[i + 2];
+        unsigned char b4 = (unsigned char)bytes[i + 3];
+        if (b1 >= 0x81 && b1 <= 0xFE &&
+            b2 >= 0x30 && b2 <= 0x39 &&
+            b3 >= 0x81 && b3 <= 0xFE &&
+            b4 >= 0x30 && b4 <= 0x39) {
+            return true;
+        }
+    }
+    return false;
+}
+
 UINT DetectEncoding(const std::vector<char>& buffer) {
     if (buffer.size() >= 3 && (unsigned char)buffer[0] == 0xEF && (unsigned char)buffer[1] == 0xBB && (unsigned char)buffer[2] == 0xBF) return 65001;
     if (buffer.size() >= 2 && (unsigned char)buffer[0] == 0xFF && (unsigned char)buffer[1] == 0xFE) return 1200;
     if (buffer.size() >= 2 && (unsigned char)buffer[0] == 0xFE && (unsigned char)buffer[1] == 0xFF) return 1201;
+
+    // Check for JIS (ISO-2022-JP) escape sequences FIRST because JIS is 7-bit and passes IsValidUtf8
+    if (HasJisEscapeSequence(buffer)) return 50220;
 
     if (IsValidUtf8(buffer)) return 65001;
 
@@ -495,14 +609,20 @@ UINT DetectEncoding(const std::vector<char>& buffer) {
     int eucScore = GetEucKrScore(buffer);
     int sjisScore = GetSjisScore(buffer);
     int johabScore = GetJohabScore(buffer);
+    int gbkScore = GetGbkScore(buffer);
+    int big5Score = GetBig5Score(buffer);
 
-    if (sjisScore > eucScore && sjisScore > johabScore && sjisScore > 0) return 932;
-    if (eucScore > sjisScore && eucScore > johabScore && eucScore > 0) return 949;
-    if (johabScore > sjisScore && johabScore > eucScore && johabScore > 0) return 1361;
-
-    if (eucScore > 0 && eucScore >= sjisScore) return 949;
-    if (sjisScore > 0) return 932;
-    if (johabScore > 0) return 1361;
+    int maxScore = (std::max)({ eucScore, sjisScore, johabScore, gbkScore, big5Score });
+    if (maxScore > 0) {
+        if (maxScore == eucScore) return 949;
+        if (maxScore == sjisScore) return 932;
+        if (maxScore == gbkScore) {
+            if (HasGb18030FourByteSequence(buffer)) return 54936;
+            return 936;
+        }
+        if (maxScore == big5Score) return 950;
+        if (maxScore == johabScore) return 1361;
+    }
 
     return 949; // Default fallback for Korean environment
 }
