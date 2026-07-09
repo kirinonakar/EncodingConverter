@@ -593,6 +593,164 @@ bool HasGb18030FourByteSequence(const std::vector<char>& bytes) {
     return false;
 }
 
+struct TextScriptProfile {
+    int HangulCount;
+    int CjkCount;
+    int BadCharacterCount;
+    TextScriptProfile(int hc, int cc, int bc) : HangulCount(hc), CjkCount(cc), BadCharacterCount(bc) {}
+};
+
+bool IsHangul(wchar_t ch) {
+    return (ch >= 0xAC00 && ch <= 0xD7A3) ||
+           (ch >= 0x1100 && ch <= 0x11FF) ||
+           (ch >= 0x3130 && ch <= 0x318F);
+}
+
+bool IsCjk(wchar_t ch) {
+    return (ch >= 0x4E00 && ch <= 0x9FFF) ||
+           (ch >= 0x3400 && ch <= 0x4DBF);
+}
+
+TextScriptProfile GetTextScriptProfile(const std::vector<char>& bytes, UINT codePage) {
+    const int sampleLimit = 128 * 1024;
+    int sampleLength = (int)(std::min)((size_t)bytes.size(), (size_t)sampleLimit);
+
+    int hangulCount = 0;
+    int cjkCount = 0;
+    int badCharacterCount = 0;
+
+    if (sampleLength > 0) {
+        int wlen = MultiByteToWideChar(codePage, 0, bytes.data(), sampleLength, NULL, 0);
+        if (wlen > 0) {
+            std::wstring wstr(wlen, 0);
+            MultiByteToWideChar(codePage, 0, bytes.data(), sampleLength, &wstr[0], wlen);
+
+            for (wchar_t ch : wstr) {
+                if (IsHangul(ch)) {
+                    hangulCount++;
+                } else if (IsCjk(ch)) {
+                    cjkCount++;
+                } else if (ch == L'\uFFFD' || ch == L'?') {
+                    badCharacterCount++;
+                }
+            }
+        }
+    }
+
+    return TextScriptProfile(hangulCount, cjkCount, badCharacterCount);
+}
+
+bool ShouldPreferEucKrOverChineseScores(const std::vector<char>& bytes, int eucKrScore) {
+    if (eucKrScore <= 0) {
+        return false;
+    }
+
+    TextScriptProfile profile = GetTextScriptProfile(bytes, 949);
+    int requiredHangulCount = bytes.size() < 1024 ? 8 : 32;
+    if (profile.HangulCount < requiredHangulCount) {
+        return false;
+    }
+
+    if (profile.CjkCount * 3 > profile.HangulCount) {
+        return false;
+    }
+
+    return profile.BadCharacterCount <= (std::max)(2, profile.HangulCount / 6);
+}
+
+bool ShouldPreferJohabOverChineseScores(
+    size_t byteCount,
+    int johabScore,
+    int johabMarkerPairCount,
+    int gbkScore,
+    int gb18030Score)
+{
+    size_t requiredMarkerPairs = byteCount < 1024 ? 1 : byteCount >= 16 * 1024 ? 8 : 2;
+    if (johabScore <= 0 || (size_t)johabMarkerPairCount < requiredMarkerPairs) {
+        return false;
+    }
+
+    int chineseScore = (std::max)(gbkScore, gb18030Score);
+    return chineseScore <= 0 || (long long)johabScore * 4 >= (long long)chineseScore * 3;
+}
+
+int CountJohabMarkerPairs(const std::vector<char>& bytes) {
+    int johabOnlyPairCount = 0;
+    int i = 0;
+    int len = (int)bytes.size();
+    while (i < len) {
+        unsigned char b = (unsigned char)bytes[i];
+        if (b < 0x80) {
+            i++;
+            continue;
+        }
+
+        if (i + 1 >= len) break;
+        unsigned char b2 = (unsigned char)bytes[i + 1];
+        if (b >= 0x84 && b <= 0xD3) {
+            bool johabOnlySecond = (b2 >= 0x5B && b2 <= 0x60) || (b2 >= 0x7B && b2 <= 0x7E);
+            if (johabOnlySecond) {
+                johabOnlyPairCount++;
+                i += 2;
+                continue;
+            }
+
+            if ((b2 >= 0x41 && b2 <= 0x7E) || (b2 >= 0x81 && b2 <= 0xFE)) {
+                i += 2;
+                continue;
+            }
+        }
+
+        i++;
+    }
+
+    return johabOnlyPairCount;
+}
+
+int GetGb18030Score(const std::vector<char>& bytes) {
+    int score = 0;
+    int i = 0;
+    int len = (int)bytes.size();
+    while (i < len) {
+        unsigned char b1 = (unsigned char)bytes[i];
+        if (b1 < 0x80) {
+            i++;
+            continue;
+        }
+
+        if (i + 3 < len) {
+            unsigned char b2 = (unsigned char)bytes[i + 1];
+            unsigned char b3 = (unsigned char)bytes[i + 2];
+            unsigned char b4 = (unsigned char)bytes[i + 3];
+            if (b1 >= 0x81 && b1 <= 0xFE &&
+                b2 >= 0x30 && b2 <= 0x39 &&
+                b3 >= 0x81 && b3 <= 0xFE &&
+                b4 >= 0x30 && b4 <= 0x39)
+            {
+                score += 8;
+                i += 4;
+                continue;
+            }
+        }
+
+        if (i + 1 >= len) break;
+        unsigned char tb2 = (unsigned char)bytes[i + 1];
+        if (b1 >= 0x81 && b1 <= 0xFE && ((tb2 >= 0x40 && tb2 <= 0x7E) || (tb2 >= 0x80 && tb2 <= 0xFE))) {
+            if (b1 >= 0xB0 && b1 <= 0xF7 && tb2 >= 0xA1 && tb2 <= 0xFE) {
+                score += 2;
+            } else {
+                score += 1;
+            }
+            i += 2;
+            continue;
+        }
+
+        i++;
+    }
+
+    return score;
+}
+
 UINT DetectEncoding(const std::vector<char>& buffer) {
     if (buffer.size() >= 3 && (unsigned char)buffer[0] == 0xEF && (unsigned char)buffer[1] == 0xBB && (unsigned char)buffer[2] == 0xBF) return 65001;
     if (buffer.size() >= 2 && (unsigned char)buffer[0] == 0xFF && (unsigned char)buffer[1] == 0xFE) return 1200;
@@ -606,23 +764,41 @@ UINT DetectEncoding(const std::vector<char>& buffer) {
     UINT htmlCP = GetHtmlCharset(buffer);
     if (htmlCP != 0) return htmlCP;
 
-    int eucScore = GetEucKrScore(buffer);
+    int eucKrScore = GetEucKrScore(buffer);
     int sjisScore = GetSjisScore(buffer);
     int johabScore = GetJohabScore(buffer);
+    int johabMarkerPairCount = CountJohabMarkerPairs(buffer);
     int gbkScore = GetGbkScore(buffer);
+    int gb18030Score = GetGb18030Score(buffer);
     int big5Score = GetBig5Score(buffer);
 
-    int maxScore = (std::max)({ eucScore, sjisScore, johabScore, gbkScore, big5Score });
+    int maxScore = (std::max)({ sjisScore, eucKrScore, johabScore, gbkScore, gb18030Score, big5Score });
+
     if (maxScore > 0) {
-        if (maxScore == eucScore) return 949;
+        if (maxScore == eucKrScore) return 949;
         if (maxScore == sjisScore) return 932;
-        if (maxScore == gbkScore) {
-            if (HasGb18030FourByteSequence(buffer)) return 54936;
-            return 936;
+
+        bool gbkFamilyScoreIsWinning = maxScore == gbkScore || maxScore == gb18030Score;
+        if (gbkFamilyScoreIsWinning &&
+            ShouldPreferJohabOverChineseScores(buffer.size(), johabScore, johabMarkerPairCount, gbkScore, gb18030Score))
+        {
+            return 1361;
         }
+
+        bool chineseScoreIsWinning = gbkFamilyScoreIsWinning || maxScore == big5Score;
+        if (chineseScoreIsWinning &&
+            ShouldPreferEucKrOverChineseScores(buffer, eucKrScore))
+        {
+            return 949;
+        }
+
+        if (maxScore == gb18030Score && gb18030Score > gbkScore) return 54936;
+        if (maxScore == gbkScore) return 936;
         if (maxScore == big5Score) return 950;
         if (maxScore == johabScore) return 1361;
     }
+
+    if (johabScore > 0 || johabMarkerPairCount >= 2) return 1361;
 
     return 949; // Default fallback for Korean environment
 }
