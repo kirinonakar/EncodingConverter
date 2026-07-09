@@ -36,6 +36,7 @@ const wchar_t* CLASS_NAME = L"EncodingConverterPanel";
 const int BASE_WIDTH = 340;
 const int BASE_HEIGHT = 220;
 static bool g_mergeEnabled = false;
+static bool g_conversionFinished = false;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 void ProcessPaths(const std::vector<std::wstring>& paths, HWND hwnd);
@@ -210,6 +211,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         SetTextColor(hdc, RGB(220, 220, 220));
         DrawTextW(hdc, checkText, -1, &rcCheckText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
+        if (g_conversionFinished) {
+            SetTextColor(hdc, RGB(0, 255, 128));
+            RECT rcStatus = rect;
+            rcStatus.top = Scale(185, dpi);
+            DrawTextW(hdc, L"변환 완료", -1, &rcStatus, DT_CENTER | DT_TOP | DT_SINGLELINE);
+        }
+
         SelectObject(hdc, hOldFont);
         DeleteObject(hFontTitle);
         DeleteObject(hFontDesc);
@@ -326,6 +334,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         }
         break;
     case WM_DROPFILES: {
+        g_conversionFinished = false;
+        InvalidateRect(hwnd, NULL, FALSE);
         HDROP hDrop = (HDROP)wParam;
         UINT fileCount = DragQueryFileW(hDrop, 0xFFFFFFFF, NULL, 0);
         std::vector<std::wstring> paths;
@@ -336,7 +346,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         }
         DragFinish(hDrop);
         ProcessPaths(paths, hwnd);
-        MessageBoxW(hwnd, L"변환 완료!", L"성공", MB_OK | MB_ICONINFORMATION);
+        g_conversionFinished = true;
+        InvalidateRect(hwnd, NULL, FALSE);
         return 0;
     }
     case WM_DPICHANGED: {
