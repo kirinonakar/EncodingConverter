@@ -659,19 +659,36 @@ bool ShouldPreferEucKrOverChineseScores(const std::vector<char>& bytes, int eucK
 }
 
 bool ShouldPreferJohabOverChineseScores(
-    size_t byteCount,
+    const std::vector<char>& bytes,
     int johabScore,
     int johabMarkerPairCount,
     int gbkScore,
     int gb18030Score)
 {
-    size_t requiredMarkerPairs = byteCount < 1024 ? 1 : byteCount >= 16 * 1024 ? 8 : 2;
-    if (johabScore <= 0 || (size_t)johabMarkerPairCount < requiredMarkerPairs) {
+    if (johabScore <= 0) {
         return false;
     }
 
-    int chineseScore = (std::max)(gbkScore, gb18030Score);
-    return chineseScore <= 0 || (long long)johabScore * 4 >= (long long)chineseScore * 3;
+    // Check script profile for Johab (CP1361)
+    TextScriptProfile profile = GetTextScriptProfile(bytes, 1361);
+    
+    // We expect some Hangul characters
+    int requiredHangulCount = bytes.size() < 1024 ? 4 : 16;
+    if (profile.HangulCount >= requiredHangulCount &&
+        profile.CjkCount * 3 <= profile.HangulCount &&
+        profile.BadCharacterCount <= (std::max)(2, profile.HangulCount / 6))
+    {
+        return true;
+    }
+
+    // Fallback to marker pair logic
+    size_t requiredMarkerPairs = bytes.size() < 1024 ? 1 : bytes.size() >= 16 * 1024 ? 8 : 2;
+    if ((size_t)johabMarkerPairCount >= requiredMarkerPairs) {
+        int chineseScore = (std::max)(gbkScore, gb18030Score);
+        return chineseScore <= 0 || (long long)johabScore * 4 >= (long long)chineseScore * 3;
+    }
+
+    return false;
 }
 
 int CountJohabMarkerPairs(const std::vector<char>& bytes) {
@@ -778,18 +795,14 @@ UINT DetectEncoding(const std::vector<char>& buffer) {
         if (maxScore == eucKrScore) return 949;
         if (maxScore == sjisScore) return 932;
 
-        bool gbkFamilyScoreIsWinning = maxScore == gbkScore || maxScore == gb18030Score;
-        if (gbkFamilyScoreIsWinning &&
-            ShouldPreferJohabOverChineseScores(buffer.size(), johabScore, johabMarkerPairCount, gbkScore, gb18030Score))
-        {
-            return 1361;
-        }
-
-        bool chineseScoreIsWinning = gbkFamilyScoreIsWinning || maxScore == big5Score;
-        if (chineseScoreIsWinning &&
-            ShouldPreferEucKrOverChineseScores(buffer, eucKrScore))
-        {
-            return 949;
+        bool chineseScoreIsWinning = maxScore == gbkScore || maxScore == gb18030Score || maxScore == big5Score;
+        if (chineseScoreIsWinning) {
+            if (ShouldPreferJohabOverChineseScores(buffer, johabScore, johabMarkerPairCount, gbkScore, gb18030Score)) {
+                return 1361;
+            }
+            if (ShouldPreferEucKrOverChineseScores(buffer, eucKrScore)) {
+                return 949;
+            }
         }
 
         if (maxScore == gb18030Score && gb18030Score > gbkScore) return 54936;
