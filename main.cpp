@@ -37,6 +37,7 @@ const int BASE_WIDTH = 340;
 const int BASE_HEIGHT = 220;
 static bool g_mergeEnabled = false;
 static bool g_conversionFinished = false;
+static int g_conversionCount = 0;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 void ProcessPaths(const std::vector<std::wstring>& paths, HWND hwnd);
@@ -215,7 +216,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             SetTextColor(hdc, RGB(0, 255, 128));
             RECT rcStatus = rect;
             rcStatus.top = Scale(185, dpi);
-            DrawTextW(hdc, L"변환 완료", -1, &rcStatus, DT_CENTER | DT_TOP | DT_SINGLELINE);
+            std::wstring statusText = L"변환 완료";
+            if (g_conversionCount > 1) {
+                statusText += L" (" + std::to_wstring(g_conversionCount) + L")";
+            }
+            DrawTextW(hdc, statusText.c_str(), -1, &rcStatus, DT_CENTER | DT_TOP | DT_SINGLELINE);
         }
 
         SelectObject(hdc, hOldFont);
@@ -346,6 +351,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         }
         DragFinish(hDrop);
         ProcessPaths(paths, hwnd);
+        g_conversionCount++;
         g_conversionFinished = true;
         InvalidateRect(hwnd, NULL, FALSE);
         return 0;
